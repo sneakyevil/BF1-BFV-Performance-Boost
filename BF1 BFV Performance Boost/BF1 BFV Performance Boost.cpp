@@ -80,6 +80,33 @@ namespace Memory
 
 namespace Utils
 {
+    DWORD FindProcessByName(const char* m_Name)
+    {
+        HANDLE m_Snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (m_Snap != INVALID_HANDLE_VALUE)
+        {
+            PROCESSENTRY32 m_ProcessEntry;
+            m_ProcessEntry.dwSize = sizeof(PROCESSENTRY32);
+
+            if (Process32First(m_Snap, &m_ProcessEntry))
+            {
+                while (Process32Next(m_Snap, &m_ProcessEntry))
+                {
+                    if (strstr(m_ProcessEntry.szExeFile, m_Name))
+                    {
+                        CloseHandle(m_Snap);
+                        return m_ProcessEntry.th32ProcessID;
+                    }
+
+                }
+            }
+
+            CloseHandle(m_Snap);
+        }
+
+        return 0x0;
+    }
+
     DWORD FindProcessProcessByArray(const char** m_Array, int m_ArraySize, int* m_LastIndex)
     {
         HANDLE m_Snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -158,12 +185,51 @@ int main()
             break;
         }
 
-        Sleep(5000);
+        Sleep(1000);
     }
+
+    // Set Processes To Idle
+    {
+        const char* m_List[] = { "EASteamProxy.exe", "Origin.exe" };
+        for (const char* m_Name : m_List)
+        {
+            bool m_SucessfullySet = false;
+
+            DWORD m_IdleProcessID = Utils::FindProcessByName(m_Name);
+            if (m_IdleProcessID)
+            {
+                HANDLE m_IdleProcessHandle = OpenProcess(PROCESS_SET_INFORMATION, 0, m_IdleProcessID);
+                if (m_IdleProcessHandle)
+                {
+                    m_SucessfullySet = (SetPriorityClass(m_IdleProcessHandle, IDLE_PRIORITY_CLASS) == 1);
+                    CloseHandle(m_IdleProcessHandle);
+                }
+            }
+
+            printf("[ + ] Process Priority for %s: %d\n", m_Name, m_SucessfullySet);
+        }
+    }
+
+    printf("\n");
 
     HANDLE m_ProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, 0, m_ProcessID);
     if (m_ProcessHandle)
     {
+        std::string m_CurrentDir(MAX_PATH, '\0');
+        m_CurrentDir.resize(GetModuleFileNameA(0, &m_CurrentDir[0], static_cast<DWORD>(m_CurrentDir.size())));
+        m_CurrentDir = m_CurrentDir.substr(0, m_CurrentDir.find_last_of("\\/"));
+
+        bool m_PerformanceDLL_Loaded = false;
+        {
+            std::string m_PerformanceDLL = (m_CurrentDir + "\\PerfBoost.dll");
+            void* m_ProcessDLLString = VirtualAllocEx(m_ProcessHandle, 0, MAX_PATH, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            if (m_ProcessDLLString && WriteProcessMemory(m_ProcessHandle, m_ProcessDLLString, &m_PerformanceDLL[0], m_PerformanceDLL.size() + 1, nullptr))
+                m_PerformanceDLL_Loaded = CreateRemoteThread(m_ProcessHandle, 0, 0, LPTHREAD_START_ROUTINE(LoadLibraryA), m_ProcessDLLString, 0, 0);
+        }
+        printf("[ + ] Performance DLL: %d\n", m_PerformanceDLL_Loaded);
+
+        Sleep(5000); // Give sometime for the game to unpack and start loadin...
+
         uintptr_t m_ProcessBase = 0, m_ProcessSize = 0;
         if (Utils::FindProcessModule(m_ProcessHandle, m_ProcessNames[m_ProcessType], &m_ProcessBase, &m_ProcessSize))
         {
